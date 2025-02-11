@@ -1,5 +1,4 @@
 import Joi from 'joi'
-// import { checksEmail } from '../controllers/userauth';
 const signupValidation = Joi.object({
   email: Joi.string()
     .email({

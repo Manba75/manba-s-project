@@ -12,7 +12,7 @@ import formatResponse from "../helpers/formateResponse.js";
 import { findUserByEmail, findUserById } from "../models/usermodel.js";
 import { orderPlaceValidation } from "../middleware/validation.js";
 import { getVehicleTypeId } from "../models/vehicletypeModel.js";
-import { getCityId, getCityDetails } from "../models/cityModel.js";
+import { getCityIdByCityName, getCityById } from "../models/cityModel.js";
 import {
   checkDpartnerAvailability,
   getDpartnerById,
@@ -40,8 +40,8 @@ export const placeOrder = async (req, res) => {
 
     const created_ip = requestIp.getClientIp(req);
 
-    const pickupCityDetails = await getCityDetails(pickup.city_id);
-    const dropCityDetails = await getCityDetails(drop.city_id);
+    const pickupCityDetails = await getCityById(pickup.city_id);
+    const dropCityDetails = await getCityById(drop.city_id);
 
     console.log("p", pickupCityDetails);
     if (!pickupCityDetails) {

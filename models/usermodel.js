@@ -1,102 +1,187 @@
 import db from "../config/db.js";
-import { errorResponse } from "../helpers/errorResponse.js";
+import { Response } from "../helpers/Response.js";
+
 // Set Time Zone for PostgreSQL Connection
 await db.query("SET TIME ZONE 'Asia/Kolkata';");
 
 // Create User Query
-const createCustomer = async (email, password, otp, createdIP) => {
+export const createCustomer = async (email, password, otp, createdIP) => {
   try {
-    const query = `
+    const checkQuery = `
+      SELECT * FROM customers
+      WHERE cust_email = $1;
+    `;
+    const existingUser = await db.query(checkQuery, [email]);
+
+    if (existingUser.rowCount > 0) {
+      const user = existingUser.rows[0];
+
+      if (user.is_deleted) {
+        // Reactivate soft-deleted user instead of inserting a new one
+        const updateQuery = `
+          UPDATE customers 
+          SET 
+            cust_password = $2, 
+            cust_isverify = false, 
+            cust_verifyotp = $3,
+            cust_expiryotp = CURRENT_TIMESTAMP + INTERVAL '10 minutes', 
+            cust_updated_on = CURRENT_TIMESTAMP, 
+            cust_created_ip = $4, 
+            is_deleted = false
+          WHERE cust_email = $1
+          RETURNING *;
+        `;
+        const updateResult = await db.query(updateQuery, [
+          email,
+          password,
+          otp,
+          createdIP,
+        ]);
+
+        if (updateResult.rowCount === 0) {
+          return Response(false, "Failed to reactivate customer.");
+        }
+        return Response(
+          true,
+          "Customer reactivated successfully",
+          updateResult.rows[0]
+        );
+      }
+
+      // If user exists and is not deleted, return error
+      return Response(false, "Email already exists");
+    }
+
+    // Insert new customer if the email is completely new
+    const insertQuery = `
       INSERT INTO customers (
         cust_email, cust_password, cust_isverify, cust_verifyotp, 
-        cust_expiryotp, cust_created_on, cust_updated_on, cust_created_ip
+        cust_expiryotp, cust_created_on, cust_updated_on, cust_created_ip, is_deleted
       )
       VALUES (
         $1, $2, $3, $4, 
-        CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata' + INTERVAL '10 minutes', 
-        CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata', 
-        CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata', 
-        $5::TEXT
+        CURRENT_TIMESTAMP + INTERVAL '10 minutes', 
+        CURRENT_TIMESTAMP, 
+        CURRENT_TIMESTAMP, 
+        $5, 
+        false
       )
       RETURNING *;
     `;
-    const result = await db.query(query, [
+    const insertResult = await db.query(insertQuery, [
       email,
       password,
       false,
       otp,
       createdIP,
     ]);
-    if (!result) {
-      return errorResponse("Failed to create customer");
+
+    if (insertResult.rowCount === 0) {
+      return Response(false, "Failed to create customer");
     }
-    return result.rows[0];
+
+    return Response(
+      true,
+      "Customer created successfully",
+      insertResult.rows[0]
+    );
   } catch (error) {
     console.error("User creation failed:", error);
-    return errorResponse("Error creating customer", error);
+    return Response(false, "Error creating customer", [], error.message);
   }
 };
 
+
+
 // Find User By Email
-const findUserByEmail = async (email) => {
+export const findUserByEmail = async (email) => {
+  try {
+    const query = `
+      SELECT * FROM customers
+      WHERE cust_email = $1 ;
+      
+    `;
+    const result = await db.query(query, [email]);
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found");
+    }
+    return Response(true, "User found", result.rows[0]);
+  } catch (error) {
+    console.error("Finding email error:", error);
+    return Response(false, "Error finding user by email", [], error.message);
+  }
+};
+
+export const updateLastLogin = async (email) => {
   try {
     const query = `
       UPDATE customers
-      SET cust_last_login = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
-      WHERE cust_email = $1
+      SET cust_last_login = CURRENT_TIMESTAMP
+      WHERE cust_email = $1 AND is_deleted = false
       RETURNING *;
     `;
     const result = await db.query(query, [email]);
-    return result.rows[0];
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found");
+    }
+
+    return Response(true, "User last login updated", result.rows[0]);
   } catch (error) {
-    console.error("Finding email error:", error);
-    return errorResponse("Error finding user by email", error);
+    console.error("Error updating last login:", error);
+    return Response(false, "Error updating last login", [], error.message);
   }
 };
 
 // Find Email for OTP Verification
-const findVerifyEmail = async (email) => {
+export const findVerifyEmail = async (email) => {
   try {
-    const query = `
-      SELECT * 
-      FROM customers 
-      WHERE cust_email = $1   ;
-    `;
+    const query = `SELECT * FROM customers WHERE cust_email = $1 AND is_deleted=false;`;
     const result = await db.query(query, [email]);
-    return result.rows.length ? result.rows[0] : null;
+
+    if (result.rowCount === 0) {
+      return Response(false, "Email not found for verification");
+    }
+    return Response(true, "Email found for verification", result.rows[0]);
   } catch (error) {
     console.error("Error retrieving user:", error);
-    return errorResponse("Error fetching OTP verification details", error);
+    return Response(
+      false,
+      "Error fetching OTP verification details",
+      [],
+      error.message
+    );
   }
 };
 
 // Update OTP
-const updateOTP = async (email, otp, expiryotp) => {
+export const updateOTP = async (email, otp, expiryotp) => {
   try {
     const query = `
       UPDATE customers 
-      SET cust_verifyotp = $2, cust_expiryotp = $3, cust_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
-      WHERE cust_email = $1;
+      SET cust_verifyotp = $2, cust_expiryotp = $3, cust_updated_on = CURRENT_TIMESTAMP
+      WHERE cust_email = $1
+      RETURNING *;
     `;
     const result = await db.query(query, [email, otp, expiryotp]);
 
     if (result.rowCount === 0) {
-      return errorResponse("User not found or OTP not updated.");
+      return Response(false, "User not found or OTP update failed.");
     }
-
-    return { success: true, message: "OTP updated successfully" };
+    return Response(true, "OTP updated successfully", result.rows[0]);
   } catch (error) {
     console.error("Error updating OTP:", error);
-    return errorResponse("Error updating OTP", error.message);
+    return Response(false, "Error updating OTP", [], error.message);
   }
 };
 
 // Verify User OTP
-const verifyUserOTP = async (email) => {
+export const verifyUserOTP = async (email) => {
   try {
     const query = `
       UPDATE customers 
-      SET cust_isverify = TRUE, cust_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
+      SET cust_isverify = TRUE, cust_updated_on = CURRENT_TIMESTAMP
       WHERE cust_email = $1
       RETURNING *;
     `;
@@ -104,127 +189,135 @@ const verifyUserOTP = async (email) => {
     const result = await db.query(query, [email]);
 
     if (result.rowCount === 0) {
-      return errorResponse("User not found or OTP verification failed.");
+      return Response(false, "User not found or OTP verification failed.");
     }
-
-    return {
-      success: true,
-      message: "User verified successfully",
-      data: result.rows[0],
-    };
+    return Response(true, "User verified successfully", result.rows[0]);
   } catch (error) {
     console.error("Error verifying OTP:", error);
-    return errorResponse("Error verifying OTP", error.message);
+    return Response(false, "Error verifying OTP", [], error.message);
   }
 };
 
 // Find User by ID
-const findUserById = async (id) => {
+export const findUserById = async (id) => {
   try {
     const query = "SELECT * FROM customers WHERE id = $1;";
     const result = await db.query(query, [id]);
-    return result.rows.length ? result.rows[0] : null;
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found");
+    }
+    return Response(true, "User found", result.rows[0]);
   } catch (error) {
     console.error("Fetching user by ID error:", error);
-    return errorResponse("Error fetching user by ID", error);
+    return Response(false, "Error fetching user by ID", [], error.message);
   }
 };
 
 // Update Reset Token
-const updateResetToken = async (email, resettoken, resettoken_expiry) => {
+export const updateResetToken = async (
+  email,
+  resettoken,
+  resettoken_expiry
+) => {
   try {
     const query = `
       UPDATE customers 
       SET cust_resettoken = $2, cust_resettoken_expiry = $3, 
-          cust_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
+          cust_updated_on = CURRENT_TIMESTAMP
       WHERE cust_email = $1
       RETURNING *;
     `;
-    return await db.query(query, [email, resettoken, resettoken_expiry]);
+    const result = await db.query(query, [
+      email,
+      resettoken,
+      resettoken_expiry,
+    ]);
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found or reset token update failed.");
+    }
+    return Response(true, "Reset token updated successfully", result.rows[0]);
   } catch (error) {
     console.error("Error updating reset token:", error);
-    return errorResponse("Error updating reset token", error);
+    return Response(false, "Error updating reset token", [], error.message);
   }
 };
 
 // Get All Users
-const getAllUser = async () => {
+export const getAllUser = async () => {
   try {
     const query = "SELECT * FROM customers WHERE is_deleted=false;";
-    return await db.query(query, []);
+    const result = await db.query(query);
+
+    if (result.rowCount === 0) {
+      return Response(false, "No users found.");
+    }
+    return Response(true, "Users fetched successfully", result.rows);
   } catch (error) {
     console.error("Error fetching users:", error);
-    return errorResponse("Error fetching all users", error);
+    return Response(false, "Error fetching all users", [], error.message);
   }
 };
 
 // Update Password & Clear Reset Token
 
-const updatePassword = async (email, password) => {
+export const updatePassword = async (email, password) => {
   try {
     const query = `
       UPDATE customers 
       SET cust_password = $2, 
-          cust_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata', 
-          cust_resettoken = NULL, 
-          cust_resettoken_expiry = NULL
+          cust_updated_on = CURRENT_TIMESTAMP, 
+          cust_resettoken = [], 
+          cust_resettoken_expiry = []
       WHERE cust_email = $1
       RETURNING *;
     `;
-    return await db.query(query, [email, password]);
+    const result = await db.query(query, [email, password]);
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found or password update failed.");
+    }
+    return Response(true, "Password updated successfully", result.rows[0]);
   } catch (error) {
     console.error("Error updating password:", error);
-    return errorResponse("Error updating password", error);
+    return Response(false, "Error updating password", [], error.message);
   }
 };
 
 // Update Customer Profile
-const updateUserProfile = async (id, name, phone) => {
+export const updateUserProfile = async (id, name, phone) => {
   try {
     const query = `
       UPDATE customers 
-      SET cust_name = $1, cust_phone = $2, cust_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
+      SET cust_name = $1, cust_phone = $2, cust_updated_on = CURRENT_TIMESTAMP
       WHERE id = $3 AND is_deleted=false
       RETURNING *;
     `;
     const result = await db.query(query, [name, phone, id]);
-    return result.rows[0];
+
+    if (result.rowCount === 0) {
+      return Response(false, "User not found or profile update failed.");
+    }
+    return Response(true, "Profile updated successfully", result.rows[0]);
   } catch (error) {
     console.error("Error updating profile:", error);
-    return errorResponse("Error updating profile", error);
+    return Response(false, "Error updating profile", [], error.message);
   }
 };
 
 // Delete User Profile
-const deleteUserProfile = async (id) => {
+export const deleteUserProfile = async (id) => {
   try {
-    const query = `
-      UPDATE customers SET is_deleted =true WHERE id = $1 RETURNING *
-    `;
-
+    const query = `UPDATE customers SET is_deleted=true WHERE id = $1 RETURNING *;`;
     const result = await db.query(query, [id]);
 
     if (result.rowCount === 0) {
-      throw new Error(`No customer found with ID ${id}`);
+      return Response(false, `No customer found with ID ${id}`);
     }
-    const deleteResult = result.rows[0];
-    return errorResponse(true, " success", deleteResult);
+    return Response(true, "User deleted successfully", result.rows[0]);
   } catch (error) {
     console.error("Error deleting profile:", error);
-    return errorResponse("Error deleting user profile", error);
+    return Response(false, "Error deleting user profile", [], error.message);
   }
-};
-
-export {
-  findUserByEmail,
-  createCustomer,
-  findVerifyEmail,
-  updateOTP,
-  verifyUserOTP,
-  findUserById,
-  updateResetToken,
-  updatePassword,
-  updateUserProfile,
-  getAllUser,
-  deleteUserProfile,
 };

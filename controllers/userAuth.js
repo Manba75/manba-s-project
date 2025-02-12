@@ -9,6 +9,7 @@ import {
   updateUserProfile,
   getAllUser,
   deleteUserProfile,
+  updateLastLogin,
 } from "../models/usermodel.js";
 import { sendOTPMail, sendResetLink } from "../helpers/sendMail.js";
 import { generateOTP } from "../helpers/generateOTP.js";
@@ -20,57 +21,51 @@ import {
   loginValidation,
   resetPasswordVerifyValidation,
   updateProfileValidation,
+ 
 } from "../middleware/validation.js";
 import { generateTokenAndSetCookies } from "../helpers/generateTokenAndSetCookies.js";
 import formatResponse from "../helpers/formateResponse.js";
 import jwt from "jsonwebtoken";
 
+
 // customer check email
 
-const checksEmail = async (req, res, next) => {
+export const checksEmail = async (req, res, next) => {
   try {
     await checksEmailValidation.validateAsync(req.body);
     const { email } = req.body;
     const emailExist = await findUserByEmail(email);
-    console.log(emailExist);
     if (emailExist) {
-      return res.status(200).json(formatResponse(1, "email is already exists"));
-    } else {
-      return res
-        .status(200)
-        .json(formatResponse(1, "you can proceed with signup."));
+      return res.status(200).json(formatResponse(1, "Email already exists"));
     }
+    return res
+      .status(200)
+      .json(formatResponse(1, "You can proceed with signup."));
   } catch (error) {
     if (error.isJoi) {
       return res.status(400).json(formatResponse(0, error.message));
     }
-    next(error);
+    return res.status(500).json(formatResponse(0, "Internal server error"));
   }
 };
 
+
 // customer Signup Controller
-const signup = async (req, res, next) => {
+export const signup = async (req, res, next) => {
   try {
     await signupValidation.validateAsync(req.body);
     const { email, password } = req.body;
     const createdip = requestIp.getClientIp(req);
 
-    // Check if the user already exists
-    const existingUser = await findUserByEmail(email);
-    if (existingUser) {
-      return res.status(400).json(formatResponse(0, "Email already exists"));
-    }
-
     // Generate OTP
     const otp = generateOTP();
     const hashpassword = await bcrypt.hash(password, 10);
 
-    // Save user in DB
+    // Save user in DB (this function will handle both new and soft-deleted users)
     const newUser = await createCustomer(email, hashpassword, otp, createdip);
-    if (!newUser) {
-      return res
-        .status(500)
-        .json(formatResponse(0, "User registration failed"));
+
+    if (!newUser || newUser.error || newUser.success===false) {
+      return res.status(400).json(formatResponse(0, newUser.message));
     }
 
     // Send OTP email
@@ -78,10 +73,16 @@ const signup = async (req, res, next) => {
 
     // Generate token
     const token = generateTokenAndSetCookies(res, newUser.id);
+    if(!token){
+      return res.status(400).json(
+      formatResponse(
+        0,
+        "generating token error" ))
+    }
     return res.status(200).json(
       formatResponse(
         1,
-        "User registered! OTP sent to your email for verification.",
+        newUser.message + " OTP sent to your email for verification.",
         {
           token,
           user: newUser,
@@ -96,113 +97,140 @@ const signup = async (req, res, next) => {
   }
 };
 
-// Verify OTP Controller
-const verifyOTP = async (req, res) => {
-  const { otp, email } = req.body;
 
+//verify
+export const verifyOTP = async (req, res) => {
   try {
+    const { otp, email } = req.body;
     let user = await findVerifyEmail(email);
-    if (!user) {
-      return res.status(400).json(formatResponse(0, "User not found"));
+    console.log("user",user)
+    if (!user || user.success===false || user.error) {
+      return res.status(400).json(formatResponse(0, user.message));
     }
-
-    if (user.cust_isverify) {
-      return res
-        .status(401)
-        .json(formatResponse(0, "User is already verified"));
+    const {cust_isverify,cust_verifyotp,cust_expiryotp}=user.data
+    if (cust_isverify) {
+      return res.status(401).json(formatResponse(0, "User already verified"));
     }
-
-    if (otp !== user.cust_verifyotp) {
+     console.log('cust',user.data.cust_verifyotp)
+   
+    if (otp !== cust_verifyotp) {
       return res.status(400).json(formatResponse(0, "Invalid OTP"));
     }
-
     const currentTime = new Date();
-    const expiryTime = new Date(user.cust_expiryotp);
-
+    const expiryTime = new Date(user.data.cust_expiryotp);
     if (currentTime > expiryTime) {
-      await updateOTP(email, null, null);
+      const updateOtpStatus = await updateOTP(email, null, null);
+      if (!updateOtpStatus || updateOtpStatus.success===false || updateOtpStatus.error) {
+        return res.status(500).json(formatResponse(0,updateOtpStatus.message));
+      }
       return res
         .status(400)
         .json(formatResponse(0, "OTP expired. Please resend OTP"));
     }
-
-    // Verify user and clear OTP
-    await verifyUserOTP(email);
-    await updateOTP(email, null, null);
-
-    // Fetch updated user to confirm changes
+    const verified = await verifyUserOTP(email);
+    if (
+      !verified ||
+      verified.success === false ||
+      verified.error 
+    ) {
+      return res.status(500).json(formatResponse(0, verified.message));
+    }
+    const updateOtpStatus = await updateOTP(email, null, null);
+    if (
+      !updateOtpStatus ||
+      updateOtpStatus.success === false ||
+      updateOtpStatus.error
+    ) {
+      return res.status(500).json(formatResponse(0, updateOtpStatus.message));
+    }
     user = await findVerifyEmail(email);
-
     return res
       .status(200)
-      .json(formatResponse(1, "User successfully verified", { user }));
+      .json(formatResponse(1, "User verified successfully", { user:user.data }));
   } catch (error) {
-    console.error("Internal Error:", error);
+    console.log(error)
     return res.status(500).json(formatResponse(0, "Internal server error"));
   }
 };
 
 // Resend OTP Controller
-const resendOTP = async (req, res) => {
-  const { email } = req.body;
-
+export const resendOTP = async (req, res) => {
   try {
+    const { email } = req.body;
     const user = await findVerifyEmail(email);
-    if (!user) {
-      return res.status(400).json(formatResponse(0, "User not found"));
+    if (!user || user.error || user.success===false) {
+      return res.status(400).json(formatResponse(0,user.message));
     }
-
-    // const { cust_isverify } = user;
-
     if (user.cust_isverify) {
-      return res
-        .status(401)
-        .json(formatResponse(0, "User is already verified"));
+      return res.status(401).json(formatResponse(0, "User already verified"));
     }
-
-    // Generate new OTP
     const newOTP = generateOTP();
+    
     const newExpiryTime = new Date();
     newExpiryTime.setMinutes(newExpiryTime.getMinutes() + 10);
-
-    // Update OTP and send email
-    await updateOTP(email, newOTP, newExpiryTime);
+    const updated = await updateOTP(email, newOTP, newExpiryTime);
+    if (!updated || updated.success===false || updated.error) {
+      return res.status(500).json(formatResponse(0, updated.message));
+    }
     await sendOTPMail(email, newOTP);
-
+    console.log("otp",newOTP)
+    // if(!sendOTP){
+    //   return res.status(400).json(formatResponse(0, "sending email error"));
+    // }
     return res
       .status(200)
-      .json(formatResponse(1, "New OTP sent to your email",{"OTP":newOTP}));
-  } catch (err) {
+      .json(formatResponse(1, "New OTP sent to your email",{otp:newOTP}));
+  } catch (error) {
     return res.status(500).json(formatResponse(0, "Internal server error"));
   }
 };
 
 // login
-const login = async (req, res, next) => {
+export const login = async (req, res, next) => 
+{
   try {
+    
     await loginValidation.validateAsync(req.body);
+
     const { email, password } = req.body;
-    const user = await findUserByEmail(email);
-    console.log(user);
-    if (!user) {
-      return res.status(200).json(formatResponse(1, "email is not exists"));
+
+    const userResponse = await findUserByEmail(email);
+    
+    if (!userResponse.success || !userResponse || userResponse.error ) {
+      return res.status(200).json(formatResponse(0, userResponse.message));
     }
+    
+    const user = userResponse.data;
+
+    
     const isMatch = await bcrypt.compare(password, user.cust_password);
     if (!isMatch) {
-      return res
-        .status(200)
-        .json(formatResponse(1, "email or password does not match"));
+      return res.status(200).json(formatResponse(1, "Email or password does not match"));
     }
-
     if (!user.cust_isverify) {
-      return res.status(200).json(formatResponse(1, "email is not verified"));
+      return res.status(200).json(formatResponse(1, "Email is not verified"));
     }
-    const token = generateTokenAndSetCookies(res, user.id);
 
-    console.log("t", token);
-    return res
-      .status(200)
-      .json(formatResponse(1, "Login successfully", { token, user: user }));
+    
+    const updateLastLoginResponse = await updateLastLogin(email);
+    if (
+      !updateLastLoginResponse.success ||
+      !updateLastLoginResponse ||
+      updateLastLoginResponse.error
+    ) {
+      return res
+        .status(500)
+        .json(formatResponse(0, updateLastLoginResponse.message));
+    }
+
+    
+    const token = generateTokenAndSetCookies(res, user.id);
+    if(!token){
+       return res.status(404),json(formatResponse(0,"Error in generating token"))
+    }
+
+    return res.status(200).json(formatResponse(1, "Login successful", { token, user }));
+    
   } catch (error) {
     if (error.isJoi) {
       return res.status(400).json(formatResponse(0, error.message));
@@ -211,34 +239,41 @@ const login = async (req, res, next) => {
   }
 };
 
+
+
 //forgot password
 
-const forgotPassword = async (req, res, next) => {
+export const forgotPassword = async (req, res, next) => {
   const { email } = req.body;
   try {
     await checksEmailValidation.validateAsync(req.body);
 
     const user = await findUserByEmail(email);
 
-    if (!user) {
+    if (!user || !user.success || user.error) {
       return res
         .status(400)
-        .json(formatResponse(0, "user not found with this email"));
+        .json(formatResponse(0, user.message));
     }
 
     // generate resettoken
     const resetToken = jwt.sign({ reset: true }, process.env.JWT_SECRET, {
       expiresIn: "1h",
     });
-    console.log("reset", resetToken);
+ 
     const resetToken_expiry = new Date();
     resetToken_expiry.setMinutes(resetToken_expiry.getMinutes() + 10);
 
-    await updateResetToken(email, resetToken, resetToken_expiry);
+    const updateToken= await updateResetToken(email, resetToken, resetToken_expiry);
+    if(!updateToken || !updateToken.success || updateToken.error){
+       return res.status(400).json(formatResponse(0, updateToken.message));
+    }
+    const resetlink = `http:/localhost:8000/api/customer/reset-password?token=${resetToken}&email=${email}`;
 
-    const resetlink = `http:/localhost:8000/api/reset-password?token=${resetToken}&email=${email}`;
-
-    await sendResetLink(email, resetlink);
+    const sendLink= await sendResetLink(email, resetlink);
+    if(!sendLink){
+       return res.status(404).json(formatResponse(0, "Error sending mail"));
+    }
     return res.status(200).json(
       formatResponse(1, "ResetLink send in your mail", {
         resetlink: resetlink,
@@ -255,80 +290,117 @@ const forgotPassword = async (req, res, next) => {
 
 //reset password
 
-const resetPassword = async (req, res, next) => {
-  const { email, newPassword, resetToken } = req.body;
+export const resetPassword = async (req, res, next) => {
+  const { email, newPassword, confirmPassword, resetToken } = req.body;
+
   try {
+   
     await resetPasswordVerifyValidation.validateAsync(req.body);
 
-    // verify token by email
-    const user = await findUserByEmail(email);
-    console.log("us", user);
-    if (!user) {
+    
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json(formatResponse(0, "Passwords do not match"));
+    }
+
+    
+    let user = await findUserByEmail(email);
+    if (!user || !user.success || user.error) {
       return res
-        .status(200)
-        .json(formatResponse(0, "user is not found with this email"));
+        .status(400)
+        .json(formatResponse(0, user.message));
     }
 
-    const { cust_resettoken, cust_resettoken_expiry, cust_password } = user;
+    const { cust_resettoken, cust_resettoken_expiry } = user;
     const currentTime = new Date();
-    const expirytime = new Date(cust_resettoken_expiry);
 
-    if (resetToken !== cust_resettoken) {
-      return res.status(400).json(formatResponse(0, "Token is invalid"));
+    
+    if (!cust_resettoken || resetToken !== cust_resettoken) {
+      return res
+        .status(400)
+        .json(formatResponse(0, "Invalid or expired token"));
     }
-    if (currentTime > expirytime) {
-      await updateResetToken(email, null, null);
-      return res.status(400).json(formatResponse(0, "expire the token"));
-    }
-    const hashPassword = await bcrypt.hash(newPassword, 10);
-    console.log("hsh", hashPassword);
-    await updatePassword(email, hashPassword);
 
-    const updateuser = await findUserByEmail(email);
-    if (!updateuser) {
-      return res.status(500).json(formatResponse(0, "Profile update failed"));
+  
+    if (currentTime > new Date(cust_resettoken_expiry)) {
+      const tokenCleared = await updateResetToken(email, null, null);
+      if (!tokenCleared || tokenCleared.success===false || tokenCleared.error) {
+        return res
+          .status(500)
+          .json(formatResponse(0, tokenCleared.message));
+      }
+      return res.status(400).json(formatResponse(0, "Token has expired"));
     }
-    await updateResetToken(email, null, null);
 
-    return res.status(200).json(
-      formatResponse(1, "Password is reset successfully", {
-        user: updateuser,
-      })
-    );
+   
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const updateSuccess = await updatePassword(email, hashedPassword);
+
+    
+    if (!updateSuccess || updateSuccess.success===false || updateSuccess.error) {
+      return res
+        .status(500)
+        .json(formatResponse(0, updateSuccess.message));
+    }
+
+    
+    const tokenCleared = await updateResetToken(email, null, null);
+    if (!tokenCleared || tokenCleared.success === false || tokenCleared.error) {
+      return res
+        .status(500)
+        .json(
+          formatResponse(0,tokenCleared.message)
+        );
+    }
+
+    return res
+      .status(200)
+      .json(formatResponse(1, "Password reset successfully", { user }));
   } catch (error) {
+    
     if (error.isJoi) {
       return res.status(400).json(formatResponse(0, error.message));
     }
-    next(error);
+
+   
+    return res
+      .status(500)
+      .json(formatResponse(0, "Something went wrong. Please try again."));
   }
 };
 
 // getALLusers
 
-const getAllUserProfile = async (req, res, next) => {
+export const getAllUserProfile = async (req, res, next) => {
   try {
-    //  const {email } =req.body
-
     const user = await getAllUser();
-    console.log("user", user);
+    if (!user || user.success===false || user.error ) {
+      return res.status(404).json(formatResponse(0, user.message));
+    }
 
     return res
       .status(200)
-      .json(formatResponse(1, "User success ", { user: user }));
+      .json(formatResponse(1, user.message, { user: user.data}));
   } catch (error) {
-    //  if (error.isJoi) {
-    return res.status(400).json(formatResponse(0, error));
-    //  }
-    //  next(error);
+   
+    console.error(error); 
+    return res
+      .status(500)
+      .json(
+        formatResponse(
+          0,
+          "An unexpected error occurred. Please try again later."
+        )
+      );
   }
 };
 
+
 //update profile
 
-const updateProfile = async (req, res, next) => {
+export const updateProfile = async (req, res, next) => {
   try {
     const { id } = req.user;
-    console.log("id", id);
+
     const { name, phone } = req.body;
 
     await updateProfileValidation.validateAsync(req.body);
@@ -339,17 +411,16 @@ const updateProfile = async (req, res, next) => {
     
     const updatedUser = await updateUserProfile(id, name, phone);
 
-    if (!updatedUser) {
-      return res.status(500).json(formatResponse(0, "Profile update failed"));
+    if (!updatedUser || updatedUser.success===false || updatedUser.error) {
+      return res.status(500).json(formatResponse(0, updatedUser.message));
     }
 
     return res
       .status(200)
       .json(
-        formatResponse(1, "Profile updated successfully", { user: updatedUser })
+        formatResponse(1, updatedUser.message, { user: updatedUser.data })
       );
   } catch (error) {
-    // console.error("Update Profile Error:", error);
     if (error.isJoi) {
       return res.status(400).json(formatResponse(0, error.message));
     }
@@ -359,45 +430,32 @@ const updateProfile = async (req, res, next) => {
 
 // delete the user
 
-const deleteUser = async (req, res, next) => {
+export const deleteUser = async (req, res, next) => {
   try {
      const { id } = req.user;
 
+    
      if (!req.user || !req.user.id) {
        return res.status(400).json(formatResponse(0, "User not found  "));
      }
-     console.log("id", req.user);
+    
     
      const deleteUser = await deleteUserProfile(id);
-     if (!deleteUser) {
-       return res.status(400).json(formatResponse(0, "deleted failed"));
+     if (!deleteUser || !deleteUser.success===false || deleteUser.error) {
+       return res.status(400).json(formatResponse(0, deleteUser.message));
      }
 
      return res
        .status(200)
-       .json(formatResponse(1, "User successfully deleted"));
+       .json(formatResponse(1, deleteUser.message));
   } catch (error) {
     return res.status(400).json(formatResponse(0, "Internal Server error"));
   }
 };
 
 // logout
-const logout = (req, res) => {
+export const logout = (req, res) => {
   res.clearCookie("token", { httpOnly: true, secure: true, sameSite: "None" }); // Clear the JWT cookie
   return res.status(200).json(formatResponse(1, "Logged out successfully"));
 };
 
-// Export controllers
-export {
-  signup,
-  verifyOTP,
-  resendOTP,
-  checksEmail,
-  login,
-  forgotPassword,
-  resetPassword,
-  updateProfile,
-  getAllUserProfile,
-  logout,
-  deleteUser,
-};

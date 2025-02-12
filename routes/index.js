@@ -6,7 +6,7 @@ import orderRoutes from "./orderRoutes.js";
 import cityRoutes from "./cityRoutes.js";
 import vehicleTypeRoutes from "./vehicleTypeRoutes.js";
 import customerRoutes from "./customerRoutes.js";
-import deliveryPartnerRoutes from './deliveryPartnerRoutes.js'
+import deliveryPartnerRoutes from "./deliveryPartnerRoutes.js";
 const app = express();
 
 app.use(cors());

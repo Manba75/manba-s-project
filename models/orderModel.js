@@ -1,6 +1,6 @@
 import db from "../config/db.js";
-import { errorResponse } from "../helpers/errorResponse.js";
-import { getCityById, getCityDetails, getCityId } from "./cityModel.js";
+import { Response } from "../helpers/Response.js";
+import { getCityById, getCityIdByCityName } from "./cityModel.js";
 // import  {savedAddress } from "../helpers/getLatLong.js";
 import axios from "axios";
 export const orderPlace = async (
@@ -15,8 +15,9 @@ export const orderPlace = async (
     // Start the transaction
     await db.query("BEGIN");
 
-    const pickup_city_id = await getCityId(pickup.city);
-    const drop_city_id = await getCityId(drop.city);
+    const pickup_city_id = await getCityIdByCityName(pickup.city);
+    const drop_city_id = await getCityIdByCityName(drop.city);
+    console.log("d", pickup_city_id);
 
     if (!pickup_city_id || !drop_city_id) {
       await db.query("ROLLBACK");
@@ -276,13 +277,13 @@ export const getUserByOrderId = async (orderId) => {
     const query = "SELECT cust_id FROM orders WHERE id=$1";
     const result = await db.query(query, [orderId]);
     if (result.rowCount === 0) {
-      return errorResponse(false, "order id is not found with customers");
+      return Response(false, "order id is not found with customers");
     }
     const getResult = result.rows[0];
-    return errorResponse(true, "success get custid ", getResult);
+    return Response(true, "success get custid ", getResult);
   } catch (error) {
     console.error("Error:", error);
-    return errorResponse(
+    return Response(
       false,
       "Error fetching customer from database in order table"
     );
@@ -302,13 +303,13 @@ RETURNING *`;
     ]);
 
     if (saveOTPResult.rowCount === 0) {
-      return errorResponse(false, "save otp error");
+      return Response(false, "save otp error");
     }
     const result = saveOTPResult.rows[0];
-    return errorResponse(true, "save otp success", result);
+    return Response(true, "save otp success", result);
   } catch (error) {
     console.error("Error updating order status:", error);
-    return errorResponse(
+    return Response(
       false,
       "Error fetching customer from database in order table"
     );

@@ -11,6 +11,7 @@ import {
   updateDpartnerProfile,
   dpartnerProfileDelete,
   setdPartnerAvailable,
+  updateLastLogin
 } from "../models/deliveryPartnerModel.js";
 import { generateOTP } from "../helpers/generateOTP.js";
 import { sendOTPMail, sendResetLink } from "../helpers/sendMail.js";
@@ -75,18 +76,17 @@ export const deliveryPartnerSignup = async (req, res, next) => {
     // console.log(city_id.data)
     const vehicletype_id = await getVehicleTypeId(vehicletype);
 
-    if (!city_id || city_id.success===false || city_id.error) {
-      return res.status(400).json(formatResponse(0,city_id.message ));
+    if (!city_id || city_id.success === false || city_id.error) {
+      return res.status(400).json(formatResponse(0, city_id.message));
     }
 
-    if (!vehicletype_id || vehicletype_id.success === false || vehicletype_id.error) {
+    if (
+      !vehicletype_id ||
+      vehicletype_id.success === false ||
+      vehicletype_id.error
+    ) {
       return res.status(400).json(formatResponse(0, vehicletype_id.message));
     }
-
-    // const existingUser = await checkEmail(dpartner_email);
-    // if (existingUser) {
-    //   return res.status(400).json(formatResponse(0, "Email already exists"));
-    // }
 
     // Generate OTP
     const otp = generateOTP();
@@ -109,23 +109,18 @@ export const deliveryPartnerSignup = async (req, res, next) => {
 
     //  Check if dpartnerSignup returned success: false
     if (!newUser || newUser.success === false || newUser.error) {
-      return res
-        .status(500)
-        .json(
-          formatResponse(0, newUser.message)
-        );
+      return res.status(500).json(formatResponse(0, newUser.message));
     }
-    
 
     const token = generateTokenAndSetCookies(res, newUser.id);
-
 
     // Send OTP email
     await sendOTPMail(dpartner_email, otp);
 
     return res.status(201).json(
       formatResponse(1, "Delivery partner registered successfully!", {
-        user: newUser.data,
+        dpartner: newUser.data,
+        otp: otp,
         token,
       })
     );
@@ -145,11 +140,11 @@ export const dpartnerVerifyOTP = async (req, res) => {
   const { otp, email } = req.body;
 
   try {
-   const userResponse = await checkEmail(email);
-   console.log(userResponse.data)
-   if (!userResponse || userResponse.error || userResponse.success === false) {
-     return res.status(400).json(formatResponse(0, "User not found"));
-   }
+    const userResponse = await checkEmail(email);
+    console.log(userResponse.data);
+    if (!userResponse || userResponse.error || userResponse.success === false) {
+      return res.status(400).json(formatResponse(0, "User not found"));
+    }
     let user = userResponse.data;
 
     if (user.dpartner_isverify) {
@@ -167,7 +162,7 @@ export const dpartnerVerifyOTP = async (req, res) => {
 
     if (currentTime > expiryTime) {
       const otpReset = await updateOTP(email, null, null);
-      if (!otpReset || otpReset.error || otpReset.success===false) {
+      if (!otpReset || otpReset.error || otpReset.success === false) {
         return res.status(500).json(formatResponse(0, otpReset.message));
       }
       return res
@@ -175,26 +170,24 @@ export const dpartnerVerifyOTP = async (req, res) => {
         .json(formatResponse(0, "OTP expired. Please resend OTP"));
     }
 
- 
     const verifyResult = await verifydpartnerOTP(email);
     if (!verifyResult || verifyResult.error || verifyResult.success === false) {
       return res.status(500).json(formatResponse(0, verifyResult.message));
     }
 
-    
     const otpReset = await updateOTP(email, null, null);
     if (!otpReset || otpReset.error || otpReset.success === false) {
       return res.status(500).json(formatResponse(0, otpReset.message));
     }
 
-    user= await checkEmail(email)
-    if(!user){
-       return res.status(400).json(formatResponse(0, user.message));
+    user = await checkEmail(email);
+    if (!user) {
+      return res.status(400).json(formatResponse(0, user.message));
     }
 
     return res
       .status(200)
-      .json(formatResponse(1, "User successfully verified", { user }));
+      .json(formatResponse(1, "User successfully verified", user.data));
   } catch (error) {
     console.error("Error in dpartnerVerifyOTP:", error);
     return res
@@ -209,12 +202,10 @@ export const dpartnerResenOTP = async (req, res) => {
 
   try {
     const userResponse = await checkEmail(email);
-    if (!userResponse || userResponse.error || userResponse.success===false) {
-      return res
-        .status(400)
-        .json(formatResponse(0, "User not found"));
+    if (!userResponse || userResponse.error || userResponse.success === false) {
+      return res.status(400).json(formatResponse(0, "User not found"));
     }
-    const user=userResponse.data
+    const user = userResponse.data;
     if (user.dpartner_isverify) {
       return res
         .status(401)
@@ -227,10 +218,10 @@ export const dpartnerResenOTP = async (req, res) => {
     newExpiryTime.setMinutes(newExpiryTime.getMinutes() + 10);
 
     const otpUpdate = await updateOTP(email, newOTP, newExpiryTime);
-    if (!otpUpdate || otpUpdate.error || otpUpdate.success===false) {
+    if (!otpUpdate || otpUpdate.error || otpUpdate.success === false) {
       return res.status(500).json(formatResponse(0, otpUpdate.message));
     }
-     await sendOTPMail(email, newOTP);
+    await sendOTPMail(email, newOTP);
 
     return res
       .status(200)
@@ -247,11 +238,11 @@ export const dpartnerLogin = async (req, res, next) => {
     await loginValidation.validateAsync(req.body);
     const { email, password } = req.body;
     const userResponse = await checkEmail(email);
-    if (!userResponse || userResponse.success===false || userResponse.error) {
+    if (!userResponse || userResponse.success === false || userResponse.error) {
       return res.status(200).json(formatResponse(1, userResponse.message));
     }
-    const user=userResponse.data
-    console.log("oa",userResponse)
+     let user = userResponse.data;
+    // console.log("oa", userResponse);
     const isMatch = await bcrypt.compare(password, user.dpartner_password);
     if (!isMatch) {
       return res
@@ -260,12 +251,25 @@ export const dpartnerLogin = async (req, res, next) => {
     }
 
     if (!user.dpartner_isverify) {
-      return res.status(200).json(formatResponse(1, "email is not verified"));
+      return res.status(200).json(formatResponse(1, "email is not verified"));  
+
+    }
+    const updateLastLoginResponse = await updateLastLogin(email);
+    if (
+      !updateLastLoginResponse.success ||
+      !updateLastLoginResponse ||
+      updateLastLoginResponse.error
+    ) {
+      return res
+        .status(500)
+        .json(formatResponse(0, updateLastLoginResponse.message));
     }
     const token = generateTokenAndSetCookies(res, user.id);
- if (!token) {
-   return res.status(404), json(formatResponse(0, "Error in generating token"));
- }
+    if (!token) {
+      return (
+        res.status(404), json(formatResponse(0, "Error in generating token"))
+      );
+    }
     return res
       .status(200)
       .json(formatResponse(1, "Login successfully", { token, user: user }));
@@ -283,10 +287,10 @@ export const dpartnerForgotPassword = async (req, res, next) => {
   try {
     await checksEmailValidation.validateAsync(req.body);
 
-   const userResponse = await checkEmail(email);
-   if (!userResponse || userResponse.success === false || userResponse.error) {
-     return res.status(200).json(formatResponse(1, userResponse.message));
-   }
+    const userResponse = await checkEmail(email);
+    if (!userResponse || userResponse.success === false || userResponse.error) {
+      return res.status(200).json(formatResponse(1, userResponse.message));
+    }
 
     const resetToken = jwt.sign({ reset: true }, process.env.JWT_SECRET, {
       expiresIn: "1h",
@@ -300,19 +304,12 @@ export const dpartnerForgotPassword = async (req, res, next) => {
       resetToken,
       resetToken_expiry
     );
-    if (!tokenUpdate || tokenUpdate.error  || tokenUpdate.success===false) {
-      return res
-        .status(500)
-        .json(formatResponse(0, tokenUpdate.message));
+    if (!tokenUpdate || tokenUpdate.error || tokenUpdate.success === false) {
+      return res.status(500).json(formatResponse(0, tokenUpdate.message));
     }
 
     const resetlink = `http://localhost:8000/api/dpartner/reset-password?token=${resetToken}&email=${email}`;
-    const mailSent = await sendResetLink(email, resetlink);
-    if (!mailSent) {
-      return res
-        .status(500)
-        .json(formatResponse(0, "Failed to send reset link"));
-    }
+    await sendResetLink(email, resetlink);
 
     return res.status(200).json(
       formatResponse(1, "Reset link sent to your email", {
@@ -337,17 +334,20 @@ export const dpartnerForgotPassword = async (req, res, next) => {
 export const dpartnerResetPassword = async (req, res, next) => {
   try {
     await resetPasswordVerifyValidation.validateAsync(req.body);
-    const { email, newPassword, resetToken } = req.body;
+    const { email, newPassword,confirmPassword, resetToken } = req.body;
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json(formatResponse(0, "Passwords do not match"));
+    }
     // verify token by email
     const userResponse = await checkEmail(email);
     if (!userResponse || userResponse.success === false || userResponse.error) {
       return res.status(200).json(formatResponse(1, userResponse.message));
     }
-    let user=userResponse.data
+    let user = userResponse.data;
     const {
       dpartner_resettoken,
       dpartner_resettoken_expiry,
-      dpartner_password,
     } = user;
     const currentTime = new Date();
     const expirytime = new Date(dpartner_resettoken_expiry);
@@ -362,7 +362,9 @@ export const dpartnerResetPassword = async (req, res, next) => {
         updateresetToken.success === false ||
         updateresetToken.error
       ) {
-        return res.status(500).json(formatResponse(0, updateresetToken.message));
+        return res
+          .status(500)
+          .json(formatResponse(0, updateresetToken.message));
       }
       return res.status(400).json(formatResponse(0, "expire the token"));
     }
@@ -384,11 +386,7 @@ export const dpartnerResetPassword = async (req, res, next) => {
 
     const tokenCleared = await updateResetToken(email, null, null);
     if (!tokenCleared || tokenCleared.success === false || tokenCleared.error) {
-      return res
-        .status(500)
-        .json(
-          formatResponse(0, tokenCleared.message)
-        );
+      return res.status(500).json(formatResponse(0, tokenCleared.message));
     }
 
     return res.status(200).json(
@@ -409,8 +407,8 @@ export const dpartnerResetPassword = async (req, res, next) => {
 export const getAlldpartnerProfile = async (req, res, next) => {
   try {
     const user = await getAllDpartner();
-    if (!user || user.success===false ||user.error) {
-      return res.status(404).json(formatResponse(0,user.message));
+    if (!user || user.success === false || user.error) {
+      return res.status(404).json(formatResponse(0, user.message));
     }
 
     return res
@@ -425,30 +423,22 @@ export const getAlldpartnerProfile = async (req, res, next) => {
 
 export const getdpartnerProfile = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
+    if (!req.user.data || !req.user.data.id) {
       return res.status(401).json(formatResponse(0, "Unauthorized access"));
     }
 
-    const { id } = req.user;
+    const { id } = req.user.data;
 
     let user;
-    
-      user = await getDpartnerById(id);
-      if(!user || user.success===false || user.error){
- return res
-   .status(500)
-   .json(formatResponse(0, user.message));
-      }
-     
-    
 
-    if (!user) {
-      return res.status(404).json(formatResponse(0, "No record found"));
+    user = await getDpartnerById(id);
+    if (!user || user.success === false || user.error) {
+      return res.status(500).json(formatResponse(0, user.message));
     }
 
     return res
       .status(200)
-      .json(formatResponse(1, "User fetched successfully",  user.data));
+      .json(formatResponse(1, "User fetched successfully", user.data));
   } catch (error) {
     return res
       .status(500)
@@ -460,27 +450,28 @@ export const getdpartnerProfile = async (req, res) => {
 
 export const dpartnerUpdateProfile = async (req, res, next) => {
   try {
-    const { id } = req.user;
+   
 
     await updateProfileValidation.validateAsync(req.body);
     const { name, phone } = req.body;
-    if (!req.user || !req.user.id) {
-      return res
-        .status(404)
-        .json(0, "User not found", { "authenticate user is": req.user });
+    if (!req.user.data || !req.user.data.id) {
+      return res.status(400).json(formatResponse(0, "User not found"));
     }
-
+     const { id } = req.user.data;
+     
+   
     // Update user profile in the database
     const updatedUser = await updateDpartnerProfile(id, phone, name);
 
-    if (!updatedUser || updatedUser.success === false ||updatedUser.error) {
+
+    if (!updatedUser || updatedUser.success === false || updatedUser.error) {
       return res.status(500).json(formatResponse(0, updatedUser.message));
     }
 
     return res
       .status(200)
       .json(
-        formatResponse(1, "Profile updated successfully",  updatedUser.data)
+        formatResponse(1,updatedUser.message, updatedUser.data)
       );
   } catch (error) {
     if (error.isJoi) {
@@ -494,19 +485,19 @@ export const dpartnerUpdateProfile = async (req, res, next) => {
 
 export const dpartnerDeleteProfile = async (req, res, next) => {
   try {
-    const { id } = req.user;
+    const { id } = req.user.data;
 
-    if (!req.user || !req.user.id) {
-      return res.status(400).json(formatResponse(0, "User not found  "));
+    if (!req.user.data || req.user.error || req.user.success===false) {
+      return res.status(400).json(formatResponse(0, req.user.message));
     }
     //   console.log("id",req.user)
 
     const deleteUser = await dpartnerProfileDelete(id);
-    if (!deleteUser || deleteUser.success===false ||deleteUser.error) {
+    if (!deleteUser || deleteUser.success === false || deleteUser.error) {
       return res.status(400).json(formatResponse(0, deleteUser.message));
     }
 
-    return res.status(200).json(formatResponse(1, "User successfully deleted"));
+    return res.status(200).json(formatResponse(1, deleteUser.message));
   } catch (error) {
     return res.status(400).json(formatResponse(0, "Internal Server error "));
   }
@@ -516,18 +507,20 @@ export const dpartnerDeleteProfile = async (req, res, next) => {
 
 export const dpartnerIsAvailable = async (req, res) => {
   try {
+      const { id } = req.user.data;
+      // console.log(req.user.data);
     const { isAvailable } = req.body;
-    const { id } = req.user;
+  
 
     await availabilitySchema.validateAsync(req.body);
 
-    if (!req.user || !req.user.id) {
+    if (!req.user.data || !req.user.data.id) {
       return res
         .status(400)
-        .json(formatResponse(0, "User not found or not authenticated"));
+        .json(formatResponse(0, req.user.message));
     }
 
-    const dpartnerId = req.user.id;
+    const dpartnerId = req.user.data.id;
 
     const updateAvailability = await setdPartnerAvailable(
       dpartnerId,

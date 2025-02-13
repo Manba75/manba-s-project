@@ -27,8 +27,8 @@ router.post("/forgot-password", dpartnerForgotPassword);
 router.post("/reset-password", dpartnerResetPassword);
 router.get("/getallusers", getAlldpartnerProfile);
 router.get("/getuser/:id", dpartnerAuthenticate, getdpartnerProfile);
-router.put("/update-profile/:id", dpartnerAuthenticate, dpartnerUpdateProfile);
+router.put("/update-profile", dpartnerAuthenticate, dpartnerUpdateProfile);
 router.put("/delete-profile/:id", dpartnerAuthenticate, dpartnerDeleteProfile);
-router.put("/available/:id", dpartnerAuthenticate, dpartnerIsAvailable);
+router.put("/available", dpartnerAuthenticate, dpartnerIsAvailable);
 
 export default router;

@@ -25,7 +25,7 @@ router.post("/check-email", checksEmail);
 router.post("/login", login);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
-router.put("/update-profile/:id", authenticate, updateProfile);
+router.put("/update-profile", authenticate, updateProfile);
 router.put("/delete-profile/:id", authenticate, deleteUser);
 router.get("/get-users", getAllUserProfile);
 router.post("/logout", authenticate, logout);

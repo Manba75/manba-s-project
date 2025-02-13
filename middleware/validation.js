@@ -292,6 +292,17 @@ export const cityValidation = Joi.object({
   }),
 });
 
+export const vehicletypeValidation = Joi.object({
+  vehicletype: Joi.string().required().trim().replace(/ /g, "").messages({
+    "string.empty": "vehicletype is required",
+  }),
+  max_weight: Joi.string().required().min(1).trim().replace(/ /g, "").messages({
+    "string.empty": "max  weight  is required",
+    "string.min": "minimum 1 kg is required",
+  }),
+});
+
+
 
 
 

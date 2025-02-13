@@ -15,7 +15,7 @@ const router = express.Router();
 router.post("/create", createvehicletype);
 router.get("/get-vehicletype/:id", getvehicletypeId);
 router.get("/getallvehicletypes", getAllvehicletypes);
-router.get("/update/:id", updateVehicleTypeController);
-router.get("/delete/:id", deleteVehicleTypeController);
+router.put("/update/:id", updateVehicleTypeController);
+router.put("/delete/:id", deleteVehicleTypeController);
 
 export default router;

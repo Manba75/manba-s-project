@@ -268,8 +268,8 @@ export const updatePassword = async (email, password) => {
       UPDATE customers 
       SET cust_password = $2, 
           cust_updated_on = CURRENT_TIMESTAMP, 
-          cust_resettoken = [], 
-          cust_resettoken_expiry = []
+          cust_resettoken = null, 
+          cust_resettoken_expiry = null
       WHERE cust_email = $1
       RETURNING *;
     `;

@@ -41,6 +41,7 @@ export const dpartnerSignup = async (
     await db.query("BEGIN"); // Start transaction
     let dpartner_id;
     let vehicleResult;
+    let dpartnerResult;
     // Check if the delivery partner already exists
     const checkQuery = `SELECT * FROM deliveryPartners WHERE dpartner_email = $1`;
     const existingDpartner = await db.query(checkQuery, [dpartner_email]);
@@ -67,7 +68,7 @@ export const dpartnerSignup = async (
           RETURNING id;
         `;
 
-        const updateResult = await db.query(reactivateQuery, [
+          dpartnerResult = await db.query(reactivateQuery, [
           dpartner_email,
           dpartner_pass,
           dpartner_phone,
@@ -77,12 +78,12 @@ export const dpartnerSignup = async (
           otp,
         ]);
 
-        if (updateResult.rowCount === 0) {
+        if (dpartnerResult.rowCount === 0) {
           await db.query("ROLLBACK");
           return Response(false, "Failed to reactivate delivery partner.");
         }
 
-         dpartner_id = updateResult.rows[0].id; // Use the existing partner's ID
+         dpartner_id = dpartnerResult.rows[0].id; // Use the existing partner's ID
       } else {
         await db.query("ROLLBACK");
         return Response(false, "Email already exists.");
@@ -105,7 +106,7 @@ export const dpartnerSignup = async (
         RETURNING id;
       `;
 
-      const dpartnerResult = await db.query(dpartnerQuery, [
+       dpartnerResult = await db.query(dpartnerQuery, [
         dpartner_email,
         dpartner_pass,
         dpartner_phone,
@@ -198,6 +199,7 @@ export const dpartnerSignup = async (
      console.log(dpartner_id)
     return Response(true, "Delivery partner and vehicle created successfully", {
       dpartner_id:  dpartner_id ,
+      dpartner:dpartnerResult.rows[0],
       vehicle: vehicleResult.rows[0],
     });
   } catch (error) {
@@ -208,7 +210,26 @@ export const dpartnerSignup = async (
 };
 
 
+export const updateLastLogin = async (email) => {
+  try {
+    const query = `
+      UPDATE  deliverypartners
+      SET dpartner_last_login = CURRENT_TIMESTAMP
+      WHERE dpartner_email = $1 AND dpartner_is_deleted = false
+      RETURNING *;
+    `;
+    const result = await db.query(query, [email]);
 
+    if (result.rowCount === 0) {
+      return Response(false, "User not found");
+    }
+
+    return Response(true, "User last login updated", result.rows[0]);
+  } catch (error) {
+    console.error("Error updating last login:", error);
+    return Response(false, "Error updating last login", [], error.message);
+  }
+};
 
 // Update OTP
 export const updateOTP = async (email, otp, expiryotp) => {
@@ -324,8 +345,8 @@ export const updatePassword = async (email, password) => {
       UPDATE deliverypartners 
       SET dpartner_password = $2, 
           dpartner_updated_on = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata', 
-          dpartner_resettoken = [], 
-          dpartner_resettoken_expiry = []
+          dpartner_resettoken = null, 
+          dpartner_resettoken_expiry = null
       WHERE dpartner_email = $1 AND dpartner_is_deleted=false
       RETURNING *;
     `;

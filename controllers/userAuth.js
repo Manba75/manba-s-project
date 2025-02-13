@@ -103,7 +103,7 @@ export const verifyOTP = async (req, res) => {
   try {
     const { otp, email } = req.body;
     let user = await findVerifyEmail(email);
-    console.log("user",user)
+    // console.log("user",user)
     if (!user || user.success===false || user.error) {
       return res.status(400).json(formatResponse(0, user.message));
     }
@@ -270,10 +270,8 @@ export const forgotPassword = async (req, res, next) => {
     }
     const resetlink = `http:/localhost:8000/api/customer/reset-password?token=${resetToken}&email=${email}`;
 
-    const sendLink= await sendResetLink(email, resetlink);
-    if(!sendLink){
-       return res.status(404).json(formatResponse(0, "Error sending mail"));
-    }
+     await sendResetLink(email, resetlink);
+    
     return res.status(200).json(
       formatResponse(1, "ResetLink send in your mail", {
         resetlink: resetlink,
@@ -310,7 +308,7 @@ export const resetPassword = async (req, res, next) => {
         .json(formatResponse(0, user.message));
     }
 
-    const { cust_resettoken, cust_resettoken_expiry } = user;
+    const { cust_resettoken, cust_resettoken_expiry } = user.data;
     const currentTime = new Date();
 
     
@@ -343,7 +341,7 @@ export const resetPassword = async (req, res, next) => {
     }
 
     
-    const tokenCleared = await updateResetToken(email, null, null);
+    const tokenCleared = await updateResetToken(email,null,null);
     if (!tokenCleared || tokenCleared.success === false || tokenCleared.error) {
       return res
         .status(500)
@@ -354,7 +352,7 @@ export const resetPassword = async (req, res, next) => {
 
     return res
       .status(200)
-      .json(formatResponse(1, "Password reset successfully", { user }));
+      .json(formatResponse(1, "Password reset successfully", updateSuccess.data));
   } catch (error) {
     
     if (error.isJoi) {
@@ -399,13 +397,14 @@ export const getAllUserProfile = async (req, res, next) => {
 
 export const updateProfile = async (req, res, next) => {
   try {
-    const { id } = req.user;
+    const { id } = req.user.data;
+    //  console.log(req.user)
 
     const { name, phone } = req.body;
 
     await updateProfileValidation.validateAsync(req.body);
 
-     if (!req.user || !req.user.id) {
+     if (!req.user || !req.user.data.id) {
        return res.status(400).json(formatResponse(0, "User not found ",{"authenticate user:":req.user}));
      }
     
@@ -418,7 +417,7 @@ export const updateProfile = async (req, res, next) => {
     return res
       .status(200)
       .json(
-        formatResponse(1, updatedUser.message, { user: updatedUser.data })
+        formatResponse(1, updatedUser.message,  updatedUser.data)
       );
   } catch (error) {
     if (error.isJoi) {
@@ -432,10 +431,10 @@ export const updateProfile = async (req, res, next) => {
 
 export const deleteUser = async (req, res, next) => {
   try {
-     const { id } = req.user;
+     const { id } = req.user.data;
 
     
-     if (!req.user || !req.user.id) {
+     if (!req.user || !req.user.data.id) {
        return res.status(400).json(formatResponse(0, "User not found  "));
      }
     

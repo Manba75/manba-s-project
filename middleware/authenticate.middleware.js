@@ -55,7 +55,7 @@ export const dpartnerAuthenticate= async(req,res,next)=>{
    }
 
    req.user = user; // Attach user to request
-  
+   console.log("r",req.user)
    next();
  } catch (error) {
    console.error("Token verification error:", error);

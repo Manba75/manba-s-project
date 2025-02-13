@@ -3,20 +3,16 @@ import { Response } from "../helpers/Response.js";
 
 export const checkVehicleType = async (vehicleType) => {
   try {
-    const checkQuery = "SELECT * FROM vehicletypes WHERE vehicletype_type = $1";
+    const checkQuery =
+      "SELECT * FROM vehicletypes WHERE vehicletype_type = $1 AND is_deleted = FALSE";
     const checkResult = await db.query(checkQuery, [vehicleType]);
 
-    if (checkResult.rows.length === 0) {
-      return Response(false, "Vehicle type not found");
+    if (checkResult.rows.length > 0) {
+      return Response(false, "Vehicle type already exists");
     }
-    return Response(true, "Vehicle type get ", checkResult.rows[0]);
+    return Response(true, "Vehicle type available", null);
   } catch (error) {
-    return Response(
-      false,
-      "Error checking vehicle type",
-      null,
-      error.message
-    );
+    return Response(false, "Error checking vehicle type", null, error.message);
   }
 };
 
@@ -26,20 +22,46 @@ export const insertVehicleTypes = async (
   createdIp
 ) => {
   try {
-    const vehicleTypesQuery = `
-      INSERT INTO vehicletypes(vehicletype_type, vehicletype_max_weight, vehicletype_created_on, vehicletype_updated_on, vehicletype_created_ip) 
-      VALUES($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $3) RETURNING *;
-    `;
+    // Check if the vehicle type exists (including soft-deleted ones)
+    const checkQuery = "SELECT * FROM vehicletypes WHERE vehicletype_type = $1";
+    const checkResult = await db.query(checkQuery, [vehicletype]);
 
+    if (checkResult.rows.length > 0) {
+      const existingVehicle = checkResult.rows[0];
+
+      if (existingVehicle.is_deleted) {
+        // If vehicle type exists but is deleted, reactivate it
+        const reactivateQuery = `
+          UPDATE vehicletypes 
+          SET is_deleted = FALSE, vehicletype_max_weight = $1, vehicletype_updated_on = CURRENT_TIMESTAMP, vehicletype_created_ip = $2
+          WHERE id = $3 RETURNING *;
+        `;
+        const reactivateResult = await db.query(reactivateQuery, [
+          max_weight,
+          createdIp,
+          existingVehicle.id,
+        ]);
+
+        return Response(
+          true,
+          "Vehicle type reactivated successfully",
+          reactivateResult.rows[0]
+        );
+      }
+
+      return Response(false, "Vehicle type already exists");
+    }
+
+    // Insert new vehicle type if it doesn't exist
+    const vehicleTypesQuery = `
+      INSERT INTO vehicletypes (vehicletype_type, vehicletype_max_weight, vehicletype_created_on, vehicletype_updated_on, vehicletype_created_ip, is_deleted) 
+      VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $3, FALSE) RETURNING *;
+    `;
     const vehicleTypeResult = await db.query(vehicleTypesQuery, [
       vehicletype,
       max_weight,
       createdIp,
     ]);
-
-    if (vehicleTypeResult.rows.length === 0) {
-      return Response(false, "Failed to insert vehicle type");
-    }
 
     return Response(
       true,
@@ -47,18 +69,14 @@ export const insertVehicleTypes = async (
       vehicleTypeResult.rows[0]
     );
   } catch (error) {
-    return Response(
-      false,
-      "Error inserting vehicle type",
-      null,
-      error.message
-    );
+    return Response(false, "Error inserting vehicle type", null, error.message);
   }
 };
 
 export const getVehicleTypeById = async (id) => {
   try {
-    const vehicleTypeQuery = "SELECT * FROM vehicletypes WHERE id = $1";
+    const vehicleTypeQuery =
+      "SELECT * FROM vehicletypes WHERE id = $1 AND is_deleted = FALSE";
     const vehicleTypeResult = await db.query(vehicleTypeQuery, [id]);
 
     if (vehicleTypeResult.rows.length === 0) {
@@ -76,7 +94,7 @@ export const getVehicleTypeById = async (id) => {
   }
 };
 
-export const getAllVehicleType = async () => {
+export const getAllVehicleTypes = async () => {
   try {
     const vehicleTypeQuery =
       "SELECT * FROM vehicletypes WHERE is_deleted = FALSE";
@@ -95,31 +113,28 @@ export const getAllVehicleType = async () => {
     return Response(
       false,
       "Error retrieving vehicle types",
+      null,
       error.message
     );
   }
 };
 
 export const getVehicleTypeId = async (vehicletype) => {
-  await db.query("BEGIN");
   try {
     const vehicleTypeQuery =
-      "SELECT id FROM vehicletypes WHERE vehicletype_type = $1";
+      "SELECT id FROM vehicletypes WHERE vehicletype_type = $1 AND is_deleted = FALSE";
     const vehicletypeResult = await db.query(vehicleTypeQuery, [vehicletype]);
 
     if (vehicletypeResult.rows.length === 0) {
-      await db.query("ROLLBACK");
       return Response(false, "Vehicle type not found");
     }
 
-    await db.query("COMMIT");
     return Response(
       true,
       "Vehicle type ID retrieved",
       vehicletypeResult.rows[0].id
     );
   } catch (error) {
-    await db.query("ROLLBACK");
     return Response(
       false,
       "Error retrieving vehicle type ID",
@@ -129,24 +144,18 @@ export const getVehicleTypeId = async (vehicletype) => {
   }
 };
 
-// Update Vehicle Type
-export const updateVehicleType = async (
-  id,
-  vehicletype,
-  max_weight,
-  updatedIp
-) => {
+export const updateVehicleType = async (id, vehicletype, max_weight) => {
   try {
     const updateQuery = `
       UPDATE vehicletypes 
-      SET vehicletype_type = $1, vehicletype_max_weight = $2, vehicletype_updated_on = CURRENT_TIMESTAMP, vehicletype_created_ip = $3 
-      WHERE id = $4 AND is_deleted = FALSE RETURNING *;
+      SET vehicletype_type = $1, vehicletype_max_weight = $2, 
+      vehicletype_updated_on = CURRENT_TIMESTAMP
+      WHERE id = $3 AND is_deleted = FALSE RETURNING *;
     `;
 
     const updateResult = await db.query(updateQuery, [
       vehicletype,
       max_weight,
-      updatedIp,
       id,
     ]);
 
@@ -160,22 +169,17 @@ export const updateVehicleType = async (
       updateResult.rows[0]
     );
   } catch (error) {
-    return Response(
-      false,
-      "Error updating vehicle type",
-      null,
-      error.message
-    );
+    return Response(false, "Error updating vehicle type", null, error.message);
   }
 };
 
-// Delete Vehicle Type
+
 export const deleteVehicleType = async (id) => {
   try {
     const deleteQuery = `
       UPDATE vehicletypes 
       SET is_deleted = TRUE, vehicletype_updated_on = CURRENT_TIMESTAMP 
-      WHERE id = $1 RETURNING *;
+      WHERE id = $1 AND is_deleted = FALSE RETURNING *;
     `;
 
     const deleteResult = await db.query(deleteQuery, [id]);
@@ -190,11 +194,6 @@ export const deleteVehicleType = async (id) => {
       deleteResult.rows[0]
     );
   } catch (error) {
-    return Response(
-      false,
-      "Error deleting vehicle type",
-      null,
-      error.message
-    );
+    return Response(false, "Error deleting vehicle type", null, error.message);
   }
 };
